@@ -1,9 +1,37 @@
 const { spawnSync } = require("child_process");
-const { readFileSync, writeFileSync, unlinkSync } = require("fs");
+const { readFileSync, writeFileSync, unlinkSync, readdirSync, statSync, mkdirSync } = require("fs");
+const path = require("path");
 const AWS = require("aws-sdk");
 const outputBucketName = process.env.outputBucket;
 
 const s3 = new AWS.S3();
+
+const sendVideoSegments = function (s3Path, bucketName) {
+    function walkSync(currentDirPath, callback) {
+        readdirSync(currentDirPath).forEach(function (name) {
+            var filePath = path.join(currentDirPath, name);
+            var stat = statSync(filePath);
+            if (stat.isFile()) {
+                callback(filePath, stat);
+            } else if (stat.isDirectory()) {  // should be able to remove this as we will only have files, no directories in /tmp/videoSegments
+                walkSync(filePath, callback);
+            }
+        });
+    }
+
+    walkSync(s3Path, function (filePath, stat) {
+        let bucketPath = filePath.substring(s3Path.length + 1);
+        let params = { Bucket: bucketName, Key: bucketPath, Body: readFileSync(filePath) };
+        s3.putObject(params, function (err, data) {
+            if (err) {
+                console.log(err)
+            } else {
+                console.log('Successfully uploaded ' + bucketPath + ' to ' + bucketName);
+            }
+        });
+
+    });
+};
 
 module.exports.chunk = async (event, context) => {
     if (!event.Records) {
@@ -28,7 +56,7 @@ module.exports.chunk = async (event, context) => {
         // write file to disk
         writeFileSync(`/tmp/${record.s3.object.key}`, s3Object.Body);
         writeFileSync("/tmp/chunks.ffcat", 'ffconcat version 1.0');
-
+        mkdirSync("/tmp/videoSegments");
 
         // convert to mp4!
         spawnSync(
@@ -39,24 +67,13 @@ module.exports.chunk = async (event, context) => {
                 "-codec:v", "libx264",
                 "-codec:a", "aac",
                 "-f", "ssegment",
-                "-segment_list", "/tmp/chunks.ffcat", "/tmp/chunk%03d.mp4"
-
-                /*With current implementation, we are just testing to see if we 
-                can properly segment and create the segment listing. 
-                If it works, we will create the .ffcat file and the chunks in the 
-                tmp file on Lambda and then send the listing file to a different s3
-                bucket. Then will try to send the chunks.
-
-                Alternatively, we could send only the manifest along; the listings
-                would need a more verbose path to tell the  */
-
-                /* "-i",
-                `/tmp/${record.s3.object.key}`,
-                `/tmp/${record.s3.object.key}.mp4` */
+                "-segment_list", "/tmp/chunks.ffcat", "/tmp/videoSegments/chunk%03d.mp4"
             ],
             { stdio: "inherit" }
         );
 
+        // send all segments to s3 for transcoding
+        sendVideoSegments("/tmp/videoSegments", outputBucketName);
         // read segment manifest from disk
         const segmentListFile = readFileSync(`/tmp/chunks.ffcat`);
 
@@ -65,10 +82,6 @@ module.exports.chunk = async (event, context) => {
         unlinkSync(`/tmp/${record.s3.object.key}`);
 
         // upload segment manifest to s3
-
-        /*  Next step may be, send chunks dir to S3 and have transcoder lambda do 
-         a recursive transcoding of files in the directory */
-
         await s3
             .putObject({
                 Bucket: outputBucketName,
