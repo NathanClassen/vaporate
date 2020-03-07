@@ -1,0 +1,52 @@
+service: vaporate
+
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - s3:GetObject
+      Resource: "arn:aws:s3:::${self:custom.uploadbucket}/*"
+    - Effect: "Allow"
+      Action:
+        - s3:PutObject
+        - s3:GetObject
+      Resource: "arn:aws:s3:::${self:custom.chunkedvids}/*"
+    - Effect: "Allow"
+      Action:
+        - s3:PutObject
+      Resource: "arn:aws:s3:::${self:custom.transcodedvids}/*"
+
+
+functions:
+  chunk:
+    handler: chunker.chunk
+    timeout: 900
+    events:
+      - s3: ${self:custom.uploadbucket}
+    environment:
+      outputBucket: "${self:custom.chunkedvids}"
+    layers:
+      - {Ref: FfmpegLambdaLayer}
+  transcode:
+    handler: transcoder.transcode
+    timeout: 900
+    events:
+      - s3: ${self:custom.chunkedvids}
+    environment:
+      outputBucket: "${self:custom.transcodedvids}"
+    layers:
+      - {Ref: FfmpegLambdaLayer}
+    
+
+custom:
+  uploadbucket: uploadedvids121045nhc
+  chunkedvids: chunkedvideos121045nhc
+  transcodedvids: transcodedvids121045nhc
+
+
+layers:
+  ffmpeg:
+    path: layer
