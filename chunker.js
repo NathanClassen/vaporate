@@ -7,6 +7,7 @@ const outputBucketName = process.env.outputBucket;
 const s3 = new AWS.S3();
 
 const sendVideoSegments = function (s3Path, bucketName) {
+    // no need for recursive function (atm). 
     function walkSync(currentDirPath, callback) {
         readdirSync(currentDirPath).forEach(function (name) {
             var filePath = path.join(currentDirPath, name);
