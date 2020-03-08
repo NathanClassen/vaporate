@@ -1,4 +1,4 @@
-/* const { spawnSync } = require("child_process");
+const { spawnSync } = require("child_process");
 const { readFileSync, writeFileSync, unlinkSync } = require("fs");
 const AWS = require("aws-sdk");
 const outputBucketName = process.env.outputBucket;
@@ -17,8 +17,9 @@ module.exports.transcode = async (event, context) => {
       continue;
     }
 
-    if (record.s3.object.key.endsWith(".mp4")) {
-      console.log("already an mp4");
+    if (record.s3.object.key.endsWith(".ffcat")) {
+      //skip processing of manifest file. Edit this code later to have it sent to next bucket?
+      console.log("not a video file");
       continue;
     }
 
@@ -60,4 +61,4 @@ module.exports.transcode = async (event, context) => {
       })
       .promise();
   }
-}; */
+};
