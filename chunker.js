@@ -6,33 +6,21 @@ const outputBucketName = process.env.outputBucket;
 
 const s3 = new AWS.S3();
 
-const sendVideoSegments = function (s3Path, bucketName) {
-    // no need for recursive function (atm). 
-    function walkSync(currentDirPath, callback) {
-        readdirSync(currentDirPath).forEach(function (name) {
-            var filePath = path.join(currentDirPath, name);
-            var stat = statSync(filePath);
-            if (stat.isFile()) {
-                callback(filePath, stat);
-            } else if (stat.isDirectory()) {  // should be able to remove this as we will only have files, no directories in /tmp/videoSegments
-                walkSync(filePath, callback);
-            }
-        });
-    }
+const sendVideoSegments = (s3path, bucket) => {
+    readdirSync(s3path).forEach(fileName => {
+        const filePath = path.join(s3path, fileName);
+        const bucketKey = fileName;
+        const data = readFileSync(filePath);
+        const params = { Bucket: bucket, Key: bucketKey, Body: data };
 
-    walkSync(s3Path, function (filePath, stat) {
-        let bucketPath = filePath.substring(s3Path.length + 1);
-        let params = { Bucket: bucketName, Key: bucketPath, Body: readFileSync(filePath) };
-        s3.putObject(params, function (err, data) {
+        s3.putObject(params, (err) => {
             if (err) {
-                console.log(err)
-            } else {
-                console.log('Successfully uploaded ' + bucketPath + ' to ' + bucketName);
+                console.log(err);
             }
         });
 
     });
-};
+}
 
 module.exports.chunk = async (event, context) => {
     if (!event.Records) {
