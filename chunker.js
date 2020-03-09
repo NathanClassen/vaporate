@@ -1,5 +1,5 @@
 const { spawnSync } = require("child_process");
-const { readFileSync, writeFileSync, unlinkSync, readdirSync, statSync, mkdirSync } = require("fs");
+const { readFileSync, writeFileSync, unlinkSync, readdirSync, mkdirSync } = require("fs");
 const path = require("path");
 const AWS = require("aws-sdk");
 const outputBucketName = process.env.outputBucket;
