@@ -52,11 +52,22 @@ module.exports.chunk = async (event, context) => {
             "/opt/ffmpeg/ffmpeg",
             [
                 "-i", `/tmp/${record.s3.object.key}`,
+                "-c:v", "libx264",
+                "-crf", "22",
+                "-map", "0",
+                "-segment_time", "5",
+                "-reset_timestamps", "1",
+                "-sc_threshold", "0",
+                "-force_key_frames", "expr:gte(t,n_forced*5)",
+                "-f", "segment",
+                "-segment_list", "/tmp/chunks.ffcat", "/tmp/videoSegments/chunk%03d.mp4"
+
+                /* "-i", `/tmp/${record.s3.object.key}`,
                 "-map", "0",
                 "-codec:v", "libx264",
                 "-codec:a", "aac",
                 "-f", "ssegment",
-                "-segment_list", "/tmp/chunks.ffcat", "/tmp/videoSegments/chunk%03d.mp4"
+                "-segment_list", "/tmp/chunks.ffcat", "/tmp/videoSegments/chunk%03d.mp4" */
             ],
             { stdio: "inherit" }
         );
