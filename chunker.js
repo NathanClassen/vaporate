@@ -1,4 +1,3 @@
-import { v4 as uuidv4 } from 'uuid';
 const { spawnSync } = require("child_process");
 const { readFileSync, writeFileSync, unlinkSync, readdirSync, mkdirSync } = require("fs");
 const path = require("path");
@@ -28,8 +27,8 @@ const sendVideoSegments = (s3path, bucket) => {
     });
 }
 
-const saveJobData = (id, tasks, file, fileFormat) => {
-    const id = id;
+const saveJobData = (jobId, file, tasks, fileFormat) => {
+    const id = jobId;
     const filename = file;
     const inputType = fileFormat;
     const totalTasks = tasks.length;
@@ -60,34 +59,36 @@ const saveJobData = (id, tasks, file, fileFormat) => {
     });
 }
 
-const saveSegmentData = (jobId, file, fileFormat) => {
-    const id = uuid4();
-    const filename = file;
-    const inputType = fileFormat;
+const saveSegmentData = (jobId, file, segments, fileFormat) => {
+    segments.forEach(segment => {
+        let name = segment.match(/[^\.]+/)[0];
+        let id = "SEGMENT-" + Date.now() + `-${name}`;
 
-    const params = {
-        TableName: segmentsTable,
-        Item: {
-            "id": id,
-            "type": "segment",
-            "filename": filename,
-            "job_id": jobId,
-            "inputType": inputType,
-            //"outputType": outputType,
-            "status": "pending",
-            "createdAt": new Date,
-            "completedAt": null
-        }
-    };
+        let params = {
+            TableName: segmentsTable,
+            Item: {
+                "id": id,
+                "type": "segment",
+                "filename": file,
+                "job_id": jobId,
+                "inputType": fileFormat,
+                //"outputType": outputType,
+                "status": "pending",
+                "createdAt": new Date,
+                "completedAt": null
+            }
+        };
 
-    console.log("Adding a new segment...");
-    docClient.put(params, (err, data) => {
-        if (err) {
-            console.log("Unable to add segment. Error JSON:", JSON.stringify(err, null, 2));
-        } else {
-            console.log("Added segment:", JSON.stringify(data, null, 2));
-        }
+        console.log("Adding a new segment...");
+        docClient.put(params, (err, data) => {
+            if (err) {
+                console.log("Unable to add segment. Error JSON:", JSON.stringify(err, null, 2));
+            } else {
+                console.log("Added segment:", JSON.stringify(data, null, 2));
+            }
+        });
     });
+    const inputType = fileFormat;
 
 }
 
@@ -111,10 +112,10 @@ module.exports.chunk = async (event, context) => {
             })
             .promise();
 
-        const jobId = uuid4();
         const fileInfo = [...`${record.s3.object.key}`.match(/(.+)\.(.+)/)];
         const filename = fileInfo[1];
         const inputFormat = fileInfo[2];
+        const jobId = "BATCH-" + Date.now();
 
         // write file to disk
         writeFileSync(`/tmp/${record.s3.object.key}`, s3Object.Body);
@@ -149,8 +150,8 @@ module.exports.chunk = async (event, context) => {
         const segmentList = readdirSync('/tmp/videoSegments');
 
         // WRITE TO DYNAMODB ##################################################
-        saveJobData(jobId, segmentList, filename, inputFormat);
-        saveSegmentData(jobId, filename, inputFormat);
+        saveJobData(jobId, filename, segmentList, inputFormat);
+        saveSegmentData(jobId, filename, segmentList, inputFormat);
         //#####################################################################
 
         // send all segments to s3 for transcoding
