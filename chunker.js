@@ -37,13 +37,11 @@ const saveJobData = (jobId, file, tasks, fileFormat) => {
         TableName: jobsTable,
         Item: {
             "id": id,
-            "type": "job",
-            "filename": filename,
-            "inputType": inputType,
-            //"outputType": outputType,
             "totalTasks": totalTasks,
             "finishedTasks": 0,
+            "filename": filename,
             "status": "pending",
+            "inputType": inputType,
             "createdAt": new Date,
             "completedAt": null
         }
@@ -61,18 +59,16 @@ const saveJobData = (jobId, file, tasks, fileFormat) => {
 
 const saveSegmentData = (jobId, file, segments, fileFormat) => {
     segments.forEach(segment => {
-        let name = segment.match(/[^\.]+/)[0];
-        let id = "SEGMENT-" + Date.now() + `-${name}`;
+        let name = segment.match(/-([^\.]+)/)[1];
+        let id = name;
+        let file = `${jobId}-${id}`;
 
         let params = {
             TableName: segmentsTable,
             Item: {
+                "jobId": jobId,
                 "id": id,
-                "type": "segment",
                 "filename": file,
-                "job_id": jobId,
-                "inputType": fileFormat,
-                //"outputType": outputType,
                 "status": "pending",
                 "createdAt": new Date,
                 "completedAt": null
@@ -115,7 +111,7 @@ module.exports.chunk = async (event, context) => {
         const fileInfo = [...`${record.s3.object.key}`.match(/(.+)\.(.+)/)];
         const filename = fileInfo[1];
         const inputFormat = fileInfo[2];
-        const jobId = "BATCH-" + Date.now();
+        const jobId = `${Date.now()}`;
 
         // write file to disk
         writeFileSync(`/tmp/${record.s3.object.key}`, s3Object.Body);
@@ -133,7 +129,7 @@ module.exports.chunk = async (event, context) => {
                 "-sc_threshold", "0",
                 "-force_key_frames", "expr:gte(t,n_forced*5)",
                 "-f", "segment",
-                "-segment_list", "/tmp/chunks.ffcat", `/tmp/videoSegments/%03d.${inputFormat}`
+                "-segment_list", "/tmp/chunks.ffcat", `/tmp/videoSegments/${jobId}-%03d.${inputFormat}`
             ],
             { stdio: "inherit" }
         );
