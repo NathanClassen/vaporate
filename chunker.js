@@ -126,7 +126,6 @@ module.exports.chunk = async (event, context) => {
             "/opt/ffmpeg/ffmpeg",
             [
                 "-i", `/tmp/${record.s3.object.key}`,
-                "-c:v", "libx264",
                 "-crf", "22",
                 "-map", "0",
                 "-segment_time", "5",
@@ -134,14 +133,7 @@ module.exports.chunk = async (event, context) => {
                 "-sc_threshold", "0",
                 "-force_key_frames", "expr:gte(t,n_forced*5)",
                 "-f", "segment",
-                "-segment_list", "/tmp/chunks.ffcat", "/tmp/videoSegments/chunk%03d.mp4"
-
-                /* "-i", `/tmp/${record.s3.object.key}`,
-                "-map", "0",
-                "-codec:v", "libx264",
-                "-codec:a", "aac",
-                "-f", "ssegment",
-                "-segment_list", "/tmp/chunks.ffcat", "/tmp/videoSegments/chunk%03d.mp4" */
+                "-segment_list", "/tmp/chunks.ffcat", `/tmp/videoSegments/%03d.${inputFormat}`
             ],
             { stdio: "inherit" }
         );
@@ -149,10 +141,9 @@ module.exports.chunk = async (event, context) => {
         const segmentListFile = readFileSync(`/tmp/chunks.ffcat`);
         const segmentList = readdirSync('/tmp/videoSegments');
 
-        // WRITE TO DYNAMODB ##################################################
+        // WRITE TO DYNAMODB
         saveJobData(jobId, filename, segmentList, inputFormat);
         saveSegmentData(jobId, filename, segmentList, inputFormat);
-        //#####################################################################
 
         // send all segments to s3 for transcoding
         sendVideoSegments("/tmp/videoSegments", outputBucketName);
