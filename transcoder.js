@@ -1,11 +1,13 @@
-const { spawnSync } = require("child_process");
 const { readFileSync, writeFileSync, unlinkSync } = require("fs");
+const { spawnSync } = require("child_process");
 const AWS = require("aws-sdk");
+const path = require("path");
+const s3 = new AWS.S3();
+const toFormat = '.mp4'; // use until sending desired format implemented
+
 const outputBucketName = process.env.outputBucket;
 
-const s3 = new AWS.S3();
-
-module.exports.transcode = async (event, context) => {
+module.exports.transcode = async (event) => {
   if (!event.Records) {
     console.log("not an s3 invocation!");
     return;
@@ -17,62 +19,58 @@ module.exports.transcode = async (event, context) => {
       continue;
     }
 
-    /*  if (record.s3.object.key.endsWith(".ffcat")) {
-       //skip processing of manifest file. Edit this code later to have it sent to next bucket?
-       console.log("not a video file");
-       continue;
-     } */
+    const segmentFileName = record.s3.object.key;
 
     // get the file
-    const s3Object = await s3
+    const segmentFile = await s3
       .getObject({
         Bucket: record.s3.bucket.name,
-        Key: record.s3.object.key
+        Key: segmentFileName
       })
       .promise();
 
     // write file to disk
-    writeFileSync(`/tmp/${record.s3.object.key}`, s3Object.Body);
+    writeFileSync(`/tmp/${segmentFileName}`, segmentFile.Body);
 
-    if (record.s3.object.key.endsWith(".ffcat")) { // if manifest file
-      let manifest = readFileSync(`/tmp/${record.s3.object.key}`);
+    if (segmentFileName.endsWith(".ffcat")) { // if manifest file
+      let manifest = readFileSync(`/tmp/${segmentFileName}`);
       await s3
         .putObject({
           Bucket: outputBucketName,
-          Key: `${record.s3.object.key}`,
+          Key: `${segmentFileName}`,
           Body: manifest
         })
         .promise();
-      unlinkSync(`/tmp/${record.s3.object.key}`);
+      unlinkSync(`/tmp/${segmentFileName}`);
       continue;
     }
 
-    const nameMinusExtension = `${record.s3.object.key}`.match(/[^\.]+/)[0];
+    const nameMinusExtension = path.parse(`${segmentFileName}`).name;
 
-    // convert to mp4!
+    // convert to toFormat!
     spawnSync(
       "/opt/ffmpeg/ffmpeg",
       [
         "-i",
-        `/tmp/${record.s3.object.key}`,
-        `/tmp/${nameMinusExtension}.mp4`
+        `/tmp/${segmentFileName}`,
+        `/tmp/${nameMinusExtension}${toFormat}`
       ],
       { stdio: "inherit" }
     );
 
-    // read mp4 from disk
-    const mp4File = readFileSync(`/tmp/${nameMinusExtension}.mp4`);
+    // read transcodedFile from disk
+    const transcodedFile = readFileSync(`/tmp/${nameMinusExtension}${toFormat}`);
 
     // delete the temp files
-    unlinkSync(`/tmp/${nameMinusExtension}.mp4`);
-    unlinkSync(`/tmp/${record.s3.object.key}`);
+    unlinkSync(`/tmp/${nameMinusExtension}${toFormat}`);
+    unlinkSync(`/tmp/${segmentFileName}`);
 
-    // upload mp4 to s3
+    // upload transcoded to s3
     await s3
       .putObject({
         Bucket: outputBucketName,
-        Key: `${nameMinusExtension}.mp4`,
-        Body: mp4File
+        Key: `${nameMinusExtension}${toFormat}`,
+        Body: transcodedFile
       })
       .promise();
   }

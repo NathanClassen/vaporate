@@ -1,37 +1,36 @@
-const { spawnSync } = require("child_process");
 const { readFileSync, writeFileSync, unlinkSync, readdirSync, mkdirSync } = require("fs");
-const path = require("path");
+const { spawnSync } = require("child_process");
 const AWS = require("aws-sdk");
-const outputBucketName = process.env.outputBucket;
+const path = require("path");
 const s3 = new AWS.S3();
 
 AWS.config.update({ endpoint: "https://dynamodb.us-east-1.amazonaws.com" });
-
 const docClient = new AWS.DynamoDB.DocumentClient();
-const jobsTable = "Jobs";
 const segmentsTable = "Segments";
+const jobsTable = "Jobs";
 
-const sendVideoSegments = (s3path, bucket) => {
-    readdirSync(s3path).forEach(fileName => {
-        const filePath = path.join(s3path, fileName);
-        const bucketKey = fileName;
-        const data = readFileSync(filePath);
-        const params = { Bucket: bucket, Key: bucketKey, Body: data };
+const outputBucketName = process.env.outputBucket;
+
+const sendVideoSegments = (videoSegmentDir, segmentsBucket) => {
+    readdirSync(videoSegmentDir).forEach(segment => {
+        const filePath = path.join(videoSegmentDir, segment);
+        const videoData = readFileSync(filePath);
+        const bucketKey = segment;
+        const params = { Bucket: segmentsBucket, Key: bucketKey, Body: videoData };
 
         s3.putObject(params, (err) => {
             if (err) {
                 console.log(err);
             }
         });
-
     });
 }
 
-const saveJobData = (jobId, file, tasks, fileFormat) => {
+const saveJobData = (jobId, fileBasename, segments, fileExt) => {
     const id = jobId;
-    const filename = file;
-    const inputType = fileFormat;
-    const totalTasks = tasks.length;
+    const totalTasks = segments.length;
+    const filename = fileBasename;
+    const inputType = fileExt;
 
     const params = {
         TableName: jobsTable,
@@ -47,48 +46,42 @@ const saveJobData = (jobId, file, tasks, fileFormat) => {
         }
     };
 
-    console.log("Adding a new job...");
-    docClient.put(params, (err, data) => {
-        if (err) {
-            console.log("Unable to add job. Error JSON:", JSON.stringify(err, null, 2));
-        } else {
-            console.log("Added job:", JSON.stringify(data, null, 2));
-        }
-    });
+    dbWriter(params, 'job');
 }
 
-const saveSegmentData = (jobId, file, segments, fileFormat) => {
+const saveSegmentData = (jobId, segments) => {
     segments.forEach(segment => {
-        let name = segment.match(/-([^\.]+)/)[1];
-        let id = name;
-        let file = `${jobId}-${id}`;
+        let id = path.parse(segment).name;
+        let filename = `${jobId}-${id}`;
 
         let params = {
             TableName: segmentsTable,
             Item: {
                 "jobId": jobId,
                 "id": id,
-                "filename": file,
+                "filename": filename,
                 "status": "pending",
                 "createdAt": new Date,
                 "completedAt": null
             }
         };
 
-        console.log("Adding a new segment...");
-        docClient.put(params, (err, data) => {
-            if (err) {
-                console.log("Unable to add segment. Error JSON:", JSON.stringify(err, null, 2));
-            } else {
-                console.log("Added segment:", JSON.stringify(data, null, 2));
-            }
-        });
+        dbWriter(params, 'segment');
     });
-    const inputType = fileFormat;
-
 }
 
-module.exports.chunk = async (event, context) => {
+const dbWriter = (params, item) => {
+    console.log(`Adding a new ${item}...`);
+    docClient.put(params, (err, data) => {
+        if (err) {
+            console.log(`Unable to add ${item}. Error JSON:`, JSON.stringify(err, null, 2));
+        } else {
+            console.log(`Added ${item}:`, JSON.stringify(data, null, 2));
+        }
+    });
+}
+
+module.exports.chunk = async (event) => {
     if (!event.Records) {
         console.log("not an s3 invocation!");
         return;
@@ -99,29 +92,30 @@ module.exports.chunk = async (event, context) => {
             console.log("not an s3 invocation!");
             continue;
         }
+        const uploadedVideo = record.s3.object.key;
 
         // get the file
-        const s3Object = await s3
+        const videoToProcess = await s3
             .getObject({
                 Bucket: record.s3.bucket.name,
-                Key: record.s3.object.key
+                Key: uploadedVideo
             })
             .promise();
 
-        const fileInfo = [...`${record.s3.object.key}`.match(/(.+)\.(.+)/)];
-        const filename = fileInfo[1];
-        const inputFormat = fileInfo[2];
+        const filePathObj = path.parse(`${uploadedVideo}`);
+        const fileBasename = filePathObj.name;
+        const fileExtension = filePathObj.ext;
+
         const jobId = `${Date.now()}`;
 
-        // write file to disk
-        writeFileSync(`/tmp/${record.s3.object.key}`, s3Object.Body);
-        writeFileSync("/tmp/chunks.ffcat", 'ffconcat version 1.0');
+        writeFileSync(`/tmp/${uploadedVideo}`, videoToProcess.Body);
+        writeFileSync("/tmp/manifest.ffcat", 'ffconcat version 1.0');
         mkdirSync("/tmp/videoSegments");
-        // convert to mp4!
+
         spawnSync(
             "/opt/ffmpeg/ffmpeg",
             [
-                "-i", `/tmp/${record.s3.object.key}`,
+                "-i", `/tmp/${uploadedVideo}`,
                 "-crf", "22",
                 "-map", "0",
                 "-segment_time", "5",
@@ -129,32 +123,28 @@ module.exports.chunk = async (event, context) => {
                 "-sc_threshold", "0",
                 "-force_key_frames", "expr:gte(t,n_forced*5)",
                 "-f", "segment",
-                "-segment_list", "/tmp/chunks.ffcat", `/tmp/videoSegments/${jobId}-%03d.${inputFormat}`
+                "-segment_list", "/tmp/manifest.ffcat", `/tmp/videoSegments/${jobId}-%03d${fileExtension}`
             ],
             { stdio: "inherit" }
         );
 
-        const segmentListFile = readFileSync(`/tmp/chunks.ffcat`);
-        const segmentList = readdirSync('/tmp/videoSegments');
+        const manifest = readFileSync(`/tmp/manifest.ffcat`);
+        const segmentNamesArr = readdirSync('/tmp/videoSegments');
 
         // WRITE TO DYNAMODB
-        saveJobData(jobId, filename, segmentList, inputFormat);
-        saveSegmentData(jobId, filename, segmentList, inputFormat);
-
-        // send all segments to s3 for transcoding
+        saveJobData(jobId, fileBasename, segmentNamesArr, fileExtension);
+        saveSegmentData(jobId, segmentNamesArr);
         sendVideoSegments("/tmp/videoSegments", outputBucketName);
-        // read segment manifest from disk
 
-        // delete the temp files
-        unlinkSync(`/tmp/chunks.ffcat`);
-        unlinkSync(`/tmp/${record.s3.object.key}`);
+        unlinkSync(`/tmp/manifest.ffcat`);
+        unlinkSync(`/tmp/${uploadedVideo}`);
+        //unlinkSync(`/tmp/videoSegments`); need to remove all segments. This does not work. 03112020
 
-        // upload segment manifest to s3
         await s3
             .putObject({
                 Bucket: outputBucketName,
                 Key: "segmentManifest.ffcat",
-                Body: segmentListFile
+                Body: manifest
             })
             .promise();
     }
