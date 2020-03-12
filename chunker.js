@@ -143,7 +143,7 @@ module.exports.chunk = async (event) => {
         await s3
             .putObject({
                 Bucket: outputBucketName,
-                Key: "segmentManifest.ffcat",
+                Key: `${jobId}/manifest.ffcat`,
                 Body: manifest
             })
             .promise();
